@@ -15,8 +15,8 @@ An implementation of a planning parameterization for planning the manipulation o
 
 #### Screenshots ####
 
-[curly worm](screenshots/jan292012curlyworm.png)
+[curly worm](Discrete-Elastic-Kinematic-Chain/raw/master/screenshots/jan292012curlyworm.png)
 
-[limbo worm](screenshots/jan292012limboworm.png)
+[limbo worm](Discrete-Elastic-Kinematic-Chain/raw/master/screenshots/jan292012limboworm.png)
 
-[many nodes](screenshots/jan292012manynodes.png)
+[many nodes](Discrete-Elastic-Kinematic-Chain/raw/master/screenshots/jan292012manynodes.png)
