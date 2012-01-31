@@ -1,7 +1,7 @@
 Discrete Elastic Kinematic Chain
 ========
 
-An implementation of a planning parameterization for planning the manipulation of a discrete elastic kinematic chain. The previous best method is implemented and compared.
+An implementation of a planning parameterization for planning the manipulation of a discrete elastic kinematic chain. A competing method is implemented and compared.
 
 #### Libraries ####
 
