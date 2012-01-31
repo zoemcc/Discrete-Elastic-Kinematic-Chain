@@ -19,11 +19,24 @@ def scaleA(a, n):
     aScaled = a * r
     return aScaled
 
+def unScaleA(a, n):
+    """scales a given A configuration using n
+    this should be used before the a is given to forwardMap"""
+
+    r = 1.0 / (n - 1)
+    aUnScaled = a / r
+    return aUnScaled
+
 def convertFromCubeCoordinates(coordinates, n):
     newCoordinates = np.dot(np.diag(np.array([200, 200, 20])), 
                             coordinates - (.5 * np.ones_like(coordinates)))
     return scaleA(newCoordinates, n)
-    
+
+def convertToCubeCoordinates(a, n):
+    aUnScaled = unScaleA(a, n)
+    newCoordinates = np.dot(np.diag(np.array([1.0 / 200, 1.0 / 200, 1.0 / 20])), 
+                            aUnScaled + (np.array([100, 100, 10])))
+    return newCoordinates
 
 def forwardMap(aScaled, n):
     """Computes the forward kinematic map for 
@@ -54,14 +67,14 @@ def forwardMap(aScaled, n):
 
     for i in range(n)[1:]:
         #constants used in the calculations
-        rcosxi2 = r * math.cos(x[i][2])
-        rsinxi2 = r * math.sin(x[i][2])
-        JInvT[2][0] = rsinxi2
-        JInvT[2][1] = -rcosxi2
+        rcosxi3 = r * math.cos(x[i][2])
+        rsinxi3 = r * math.sin(x[i][2])
+        JInvT[2][0] = rsinxi3
+        JInvT[2][1] = -rcosxi3
 
         #recursion step
-        u[i] = -np.dot(np.array([-rsinxi2, rcosxi2, 1]), p[i])
-        x[i + 1] = np.array([rcosxi2, rsinxi2, u[i]]) + x[i]
+        u[i] = -np.dot(np.array([-rsinxi3, rcosxi3, 1]), p[i])
+        x[i + 1] = np.array([rcosxi3, rsinxi3, u[i]]) + x[i]
         p[i + 1] = np.dot(JInvT, p[i])
     return u, x, p
 
@@ -129,12 +142,58 @@ def planner(qInit, qGoal, rho, iterations):
                 #completePath = joinPaths(tInit, path[0], tGoal, path[1])
             #pathCurve = vis.curve(color=vis.color.orange)
             #for node in completePath:
+        if choice < 0.5:
+            milestoneTree, notMilestoneTree = tInit, tGoal
+        else:
+            milestoneTree, notMilestoneTree = tGoal, tInit
+                #pathCurve.append(node.coordinates)
+            return completePath
+    return False
+
+def plannerB(pointInit, bEnd, rho, iterations):
+    """RRT planner to get a startpoint to the bEnd """
+    try:
+        tInit = Tree((10, 10), pointInit)
+    except InputError:
+        print 'Initial point is not stable.'
+        raise
+    curves = []
+    for i in range(iterations)[1:]:
+        if (i % 50) == 0:
+            tInit.reconfigureArrays()
+        milestone = expandTreeB(tInit, rho)
+        path = connectTreesB(milestone, tInit, bEnd, rho)
+        if (i % 5) == 0:
+            for curve in curves:
+                curve.visible = False
+            curves = []
+            curves.extend(displayGraph(tInit.graph.edges(), vis.color.green))
+            #time.sleep(.2) #for animating
+        if path is not None:
+
+            #print path[0]
+            for curve in curves:
+                curve.visible = False
+            displayGraphB(tInit.graph.edges(), vis.color.green)
+            #tInit.graph.add_edges_from(tGoal.graph.reverse().edges())
+            completePath = conglomeratePathB(path, tInit)
+            #for start, end in tGoal.graph.edges():
+                #intermediateConfigurations = tGoal.graph[start][end]['intermediateConfigurations']
+                #intermediateConfigurations.reverse()
+                #tInit.addEdge(end, start, weight=tGoal.graph[start][end]['weight'],
+                                #intermediateConfigurations=intermediateConfigurations)
+            #completePath = nx.shortest_path(tInit.graph, qInit, qGoal)
+            #if choice < .5:
+                #completePath = joinPaths(tInit, path[1], tGoal, path[0])
+            #else:
+                #completePath = joinPaths(tInit, path[0], tGoal, path[1])
+            #pathCurve = vis.curve(color=vis.color.orange)
+            #for node in completePath:
                 #pathCurve.append(node.coordinates)
             return completePath
     return False
 
 def joinPaths(firstTree, firstHalfPath, secondTree, secondHalfPath):
-    #print firstTree, secondTree
     firstPath = firstTree.graph.subgraph(firstHalfPath)
     #print firstPath
     secondPath = secondTree.graph.subgraph(secondHalfPath).reverse()
@@ -171,6 +230,23 @@ def connectTrees(milestone, milestoneTree, notMilestoneTree, rho):
             return None
         newMilestone = notMilestoneTree.getUniformSample()
 
+def connectTreesB(milestone, beginTree, bEnd, rho, epsilon=.001):
+    """Attempts to connect the most recently added-to tree to 
+    the other tree.  Tries two configurations, tests for distance, and 
+    then connects."""
+    distance = l2DistanceBp2Undefined(milestone, bEnd)
+    if distance < rho:
+        pathResults = edgeBetweenB(milestone, bEnd, epsilon)
+        if pathResults:
+            beginTree.addEdgeB(milestone, pathResults[1], intermediateConfigurations=pathResults[0])
+            #get the path from the root to the other root to test
+            node = pathResults[1]
+            path = nx.shortest_path(beginTree.graph, source=beginTree.root, target=node)
+            return path
+        else:
+            #no path exist between this node and the endpoint
+            return None
+
 def expandTree(tree, rho, iterations=100):
     possibleSample = None
     while True:
@@ -181,6 +257,17 @@ def expandTree(tree, rho, iterations=100):
                 tree.addEdge(milestone, possibleSample)
                 #print len(tree.graph.nodes())
                 return possibleSample
+
+def expandTreeB(tree, rho, iterations=100, epsilon=.001):
+    while True:
+        milestone = tree.getRandomSample()
+        for i in range(iterations)[1:]:
+            possibleB = giveSampleFromCubeB(milestone, rho / i)
+            pathResults = edgeBetweenB(milestone, possibleB, epsilon)
+            if pathResults:
+                tree.addEdgeB(milestone, pathResults[1], intermediateConfigurations=pathResults[0])
+                #print len(tree.graph.nodes())
+                return pathResults[1]
 
 def giveSampleFromCube(point, radius):
     """Samples an (approximately) uniformly random sample from within a cube 
@@ -196,6 +283,28 @@ def giveSampleFromCube(point, radius):
             newCoordinate = 0.0
         coordinates.append(newCoordinate)
     return Point(coordinates)
+
+def giveSampleFromCubeB(point, radius):
+    """Samples an (approximately) uniformly random sample from within a cube 
+    around point, while staying within the bounds of [-1, 1]^(n - 1), 
+    where n is the dimension of point's coordinate.  The last 
+    coordinate is untouched."""
+    coordinates = []
+    while not coordinates:
+        for i in range(len(point.coordinates) - 1):
+            newCoordinate = 2.0 * radius * (random.random() - 0.5)
+            newCoordinate += point.b[i]
+            if newCoordinate > 1.0:
+                newCoordinate = 1.0
+            if newCoordinate < -1.0:
+                newCoordinate = -1.0
+            coordinates.append(newCoordinate)
+        newCoordinate = 2.0 * radius * (random.random() - 0.5)
+        newCoordinate += point.coordinates[i]
+        coordinates.append(newCoordinate)
+        if np.linalg.norm(coordinates[:-1]) > 1.0:
+            coordinates = []
+    return coordinates
 
 def testPath(milestoneTree, firstHalfPath, notMilestoneTree, secondHalfPath, epsilon=0.003):
     """Checks a potential path for collision.  Maintains a priority queue 
@@ -299,7 +408,6 @@ def bisectionConfiguration(node1, node2):
     return Point((node1.coordinates + node2.coordinates) / 2.0)
 
 class Tree(object):
-    
     def __init__(self, arrayShape, root):
         self.graph = nx.DiGraph()
         self.densityArray = np.zeros(arrayShape)
@@ -337,6 +445,26 @@ class Tree(object):
         #print "edges from startPoint: ", self.graph[startPoint]
         #print "edge type: ", type(self.graph[startPoint])
         #print "edge dict: ", self.graph[startPoint][endPoint]
+        self.graph[startPoint][endPoint]['weight'] = weight
+        if intermediateConfigurations is None:
+            self.graph[startPoint][endPoint]['intermediateConfigurations'] = []
+        else:
+            self.graph[startPoint][endPoint]['intermediateConfigurations'] = intermediateConfigurations
+        self.addNodeToArray(startPoint)
+        self.addNodeToArray(endPoint)
+
+    def addEdgeB(self, startPoint, endPoint, weight=None, intermediateConfigurations=None):
+        """Add an edge to the tree.  Adds in edge attributes weight 
+        and stores the collision checking 
+        data and beginning/intermediate/end configurations."""
+        if weight is None:
+            weight = l2DistanceB(startPoint, endPoint)
+        #print "edges: ", self.graph.edges() 
+        #print "graph type: ", type(self.graph)
+        #print "edges from startPoint: ", self.graph[startPoint]
+        #print "edge type: ", type(self.graph[startPoint])
+        #print "edge dict: ", self.graph[startPoint][endPoint]
+        self.graph.add_edge(startPoint, endPoint)
         self.graph[startPoint][endPoint]['weight'] = weight
         if intermediateConfigurations is None:
             self.graph[startPoint][endPoint]['intermediateConfigurations'] = []
@@ -487,16 +615,58 @@ class Tree(object):
         #print closeMilestone
         return closeMilestone
 
+def expandTowardsB(p, q, epsilon):
+    Z = p.Zn()
+    deltab = q - p.b
+    deltaa = np.linalg.solve(Z, deltab)
+    deltaamag = np.linalg.norm(deltaa)
+    if deltaamag < epsilon:
+        newPoint = Point(None, a=deltaa + p.a)
+        needToContinueExpanding = False
+    else:
+        newPoint = Point(None, a=deltaa / deltaamag * epsilon + p.a)
+        needToContinueExpanding = True
+    if newPoint.isStable():
+        return newPoint, needToContinueExpanding, True
+    else:
+        return newPoint, needToContinueExpanding, False
+
+def edgeBetweenB(p, q, epsilon):
+    intermediateConfigurations = []
+    currentp = p
+    needToContinueExpanding = False
+    while not needToContinueExpanding:
+        currentp, needToContinueExpanding, stable = expandTowardsB(currentp, q, epsilon)
+        if not stable:
+            return False
+        else:
+            intermediateConfigurations.append(currentp)
+            #add in last point as a node
+            if not needToContinueExpanding:
+                currentp, needToContinueExpanding, stable = expandTowardsB(currentp, q, epsilon)
+                if not stable:
+                    return False
+                else:
+                    if needToContinueExpanding:
+                        intermediateConfigurations.append(currentp)
+    return intermediateConfigurations, currentp
+
 class Point(object):
     """Provides a class that is the basic object(node of manipulation) 
     in the planning class."""
     #TODO: add in conversion from script A coordinates to [0,1]^n coordinates and 
     #back.  Just store each copy separately.
     
-    def __init__(self, coordinates):
-        if coordinates is None:
-            coordinates = np.array([])
-        self.coordinates = np.array(coordinates)
+    def __init__(self, coordinates, a=None):
+        if a is not None:
+            self.a = a
+            self.coordinates = convertToCubeCoordinates(a, len(a))
+        else:
+            if coordinates is None:
+                coordinates = np.array([])
+            self.coordinates = np.array(coordinates)
+            self.a = None
+        self.Z = None
         self.stable = None
 
     #override container functions to provide functionality
@@ -512,6 +682,31 @@ class Point(object):
     def __len__(self):
         return len(self.coordinates)
 
+    def Zn(self):
+        if self.Z is None:
+            Zi = np.zeros((self.n + 1, 3, 3))
+            duda1 = -self.x[0][1]
+            duda2 = self.x[0][0]
+            duda3 = -1.0
+            Zi[1, 2, :] = np.array([duda1, duda2, duda3])
+            for i in range(self.n + 1)[1:]:
+                rcosxi3 = self.r * math.cos(self.x[i][2])
+                rsinxi3 = self.r * math.sin(self.x[i][2])
+                duda1 = -self.x[i][1] - rsinxi3 - self.a[0] * (Zi[i][1][0] + \
+                                rcosxi3 * Zi[i][2][0]) + self.a[1] * (Zi[i][0][0] - 
+                                rsinxi3 * Zi[i][2][0])
+                duda2 = self.x[i][0] + rcosxi3 - self.a[0] * (Zi[i][1][1] + \
+                                rcosxi3 * Zi[i][2][1]) + self.a[1] * (Zi[i][0][1] - 
+                                rsinxi3 * Zi[i][2][1])
+                duda3 = - self.a[0] * (Zi[i][1][2] + rcosxi3 * Zi[i][2][2]) \
+                    + self.a[1] * (Zi[i][0][2] - rsinxi3 * Zi[i][2][2]) - 1.0
+                Zi[i, :, :] = Zi[i - 1, :, :] + np.vstack((rsinxi3 * Zi[i - 1, 2, :], 
+                            rcosxi3 * Zi[i - 1, 2, :], np.array([duda1, duda2, duda3])))
+            self.Z = Zi[self.n, :, :]
+            return Zi[self.n, :, :]
+        else:
+            return self.Z
+
     def isStable(self):
         """Collision checking for a configuration.
         Discrete Riccatti recursion through the state to 
@@ -523,13 +718,15 @@ class Point(object):
             return self.stable
 
         #useful constants
-        n = 15
+        n = 40
         self.n = n
         r = 1.0 / (n - 1)
         self.r = r
         #calculate trajectories first
-        self.a = convertFromCubeCoordinates(self.coordinates, n)
+        if self.a is None:
+            self.a = convertFromCubeCoordinates(self.coordinates, n)
         self.u, self.x, self.p = forwardMap(self.a, n)
+        self.b = self.x[-1]
 
         
         #set up A matrix quickly
@@ -673,12 +870,29 @@ def l2Distance(point1, point2, memo={}):
             memo[point2, point1] = distance
             return distance
 
+def l2DistanceB(point1, point2, memo={}):
+    """memoized l2Distance function"""
+    try:
+        return memo[point1, point2]
+    except KeyError:
+        try:
+            return memo[point2, point1]
+        except KeyError:
+            distance = sps.distance.euclidean(point1.b, point2.b)
+            memo[point1, point2] = distance
+            memo[point2, point1] = distance
+            return distance
+
+def l2DistanceBp2Undefined(point1, point2):
+    """memoized l2Distance function"""
+    distance = sps.distance.euclidean(point1.b, point2)
+    return distance
+
 def pairUpXCurve(point):
     edgesInCurve = []
     for firstPoint, secondPoint in zip(point[:-1], point[1:]):
         edgesInCurve.append((firstPoint[:-1], secondPoint[:-1]))
     return edgesInCurve
-    
 
 class BoundingTree(object):
     def __init__(self, edgesInCurve, n, indexStart, indexEnd):
@@ -802,8 +1016,6 @@ def checkCollisionSingleQuery(node1, node2):
                     #print 'collision found!'
                     return 'collision', 'collision'
 
-                
-
 def displayGraph(edges, color):
     arrows = []
     #print edges
@@ -817,6 +1029,18 @@ def displayGraph(edges, color):
         arrows.append(arrow)
     return arrows
 
+def displayGraphB(edges, color):
+    arrows = []
+    #print edges
+    for p1, p2 in edges:
+        arrow = vis.arrow(pos=p1.b, axis=(p2.b - p1.b), color=color, shaftwidth=.0025)
+        #curve = vis.curve(color=color)
+        #print 'visual object coordinates: ', p1.coordinates
+        #time.sleep(4)
+        #curve.append([float(p1[0].coordinates), float(p1[1].coordinates), float(p1[2].coordinates)])
+        #curve.append([float(p2[0].coordinates), float(p2[1].coordinates), float(p2[2].coordinates)])
+        arrows.append(arrow)
+    return arrows
 
 def conglomeratePath(firstHalfPath, firstTree, secondHalfPath, secondTree):
     fullPath = []
@@ -836,6 +1060,17 @@ def conglomeratePath(firstHalfPath, firstTree, secondHalfPath, secondTree):
                 secondPath.append(intNode)
         secondPath.reverse()
         fullPath.extend(secondPath)
+    return fullPath
+
+def conglomeratePathB(path, tree):
+    fullPath = []
+    if path:
+        for prevNode, node in zip(path[:-1], path[1:]):
+            fullPath.append(prevNode)
+            for intNode in tree.graph[prevNode][node]['intermediateConfigurations']:
+                #print intNode
+                fullPath.append(intNode)
+        fullPath.append(path[-1])
     return fullPath
 
 def animatePath(path, graphScene, elasticaScene):
@@ -865,13 +1100,10 @@ def animatePath(path, graphScene, elasticaScene):
         vcurve.visible = False
         elasticaScene.select()
 
-
 class InputError(Exception):
     """Exceptions raised about input errors."""
     def __init__(self, msg):
         self.msg = msg
-
-    
 
 if __name__ == '__main__':
     scene1 = vis.display(center=[.5, .5, .5])
@@ -896,9 +1128,13 @@ if __name__ == '__main__':
         scene1.select()
         #time.sleep(.1)
         try:
-            vis.sphere(pos=p1.coordinates, color=vis.color.green, radius=.03)
-            vis.sphere(pos=p2.coordinates, color=vis.color.blue, radius=.03)
-            fullPath = planner(p1, p2, .35, 1000)
+            while not p1.isStable():
+                p1 = Point(np.random.rand(3))
+            while not p2.isStable():
+                p2 = Point(np.random.rand(3))
+            vis.sphere(pos=p1.b, color=vis.color.green, radius=.03)
+            vis.sphere(pos=p2.b, color=vis.color.blue, radius=.03)
+            fullPath = plannerB(p1, p2.b, .35, 1000)
             print 'path found'
             animatePath(fullPath, scene1, scene2)
             time.sleep(2)
@@ -912,3 +1148,4 @@ if __name__ == '__main__':
             for obj in scene2.objects:
                 obj.visible = False
             continue
+
